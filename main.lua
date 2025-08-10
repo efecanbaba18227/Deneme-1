@@ -1,247 +1,376 @@
---=== Settings ===--
-local DEFAULT_WALK_SPEED = 16
-local DEFAULT_FLY_SPEED = 40
+-- SimpleDraggableMenu (LocalScript)
+-- Put this in StarterPlayer > StarterPlayerScripts
 
---=== Services ===--
+-- Services
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
-local player = Players.LocalPlayer
-local character = player.Character or player.CharacterAdded:Wait()
-local humanoid = character:WaitForChild("Humanoid")
 
---=== State Vars ===--
+local player = Players.LocalPlayer
+
+-- State
 local flyEnabled = false
-local flySpeed = DEFAULT_FLY_SPEED
-local speedValue = DEFAULT_WALK_SPEED
+local flySpeed = 40 -- default
+local walkSpeed = 35 -- default (senin istediğin 30-40 aralığına yakın)
 local infiniteJump = false
 local espEnabled = false
 
+-- Character refs (update on respawn)
+local character = player.Character or player.CharacterAdded:Wait()
+local humanoid = character:WaitForChild("Humanoid")
+local rootPart = character:WaitForChild("HumanoidRootPart")
+
 local bodyGyro, bodyVelocity
 
---=== GUI Creation (Rayfield Style) ===--
-local screenGui = Instance.new("ScreenGui")
-screenGui.Parent = player:WaitForChild("PlayerGui")
-screenGui.IgnoreGuiInset = true
-
-local mainFrame = Instance.new("Frame")
-mainFrame.Size = UDim2.new(0, 320, 0, 420)
-mainFrame.Position = UDim2.new(0, 50, 0.5, -210)
-mainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
-mainFrame.BorderSizePixel = 0
-mainFrame.Active = true
-mainFrame.Draggable = true
-mainFrame.Parent = screenGui
-
--- Rayfield tarzı köşeler
-local corner = Instance.new("UICorner")
-corner.CornerRadius = UDim.new(0, 8)
-corner.Parent = mainFrame
-
--- Gölge efekti
-local shadow = Instance.new("ImageLabel")
-shadow.AnchorPoint = Vector2.new(0.5, 0.5)
-shadow.Position = UDim2.new(0.5, 0, 0.5, 0)
-shadow.Size = UDim2.new(1, 30, 1, 30)
-shadow.BackgroundTransparency = 1
-shadow.Image = "rbxassetid://1316045217"
-shadow.ImageColor3 = Color3.new(0, 0, 0)
-shadow.ImageTransparency = 0.5
-shadow.ScaleType = Enum.ScaleType.Slice
-shadow.SliceCenter = Rect.new(10, 10, 118, 118)
-shadow.Parent = mainFrame
-
-local title = Instance.new("TextLabel")
-title.Size = UDim2.new(1, 0, 0, 40)
-title.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
-title.Text = "Control Panel"
-title.TextColor3 = Color3.new(1, 1, 1)
-title.Font = Enum.Font.GothamBold
-title.TextSize = 20
-title.Parent = mainFrame
-
-local titleCorner = Instance.new("UICorner")
-titleCorner.CornerRadius = UDim.new(0, 8)
-titleCorner.Parent = title
-
--- Buton oluşturucu
-local function createButton(name, yPos, callback)
-	local btn = Instance.new("TextButton")
-	btn.Size = UDim2.new(1, -20, 0, 40)
-	btn.Position = UDim2.new(0, 10, 0, yPos)
-	btn.BackgroundColor3 = Color3.fromRGB(55, 55, 55)
-	btn.Text = name
-	btn.TextColor3 = Color3.new(1, 1, 1)
-	btn.Font = Enum.Font.Gotham
-	btn.TextSize = 16
-	btn.Parent = mainFrame
-
-	local btnCorner = Instance.new("UICorner")
-	btnCorner.CornerRadius = UDim.new(0, 6)
-	btnCorner.Parent = btn
-
-	btn.MouseButton1Click:Connect(callback)
-	return btn
+-- Utility: safe get char
+local function refreshCharacterRefs()
+    character = player.Character or player.CharacterAdded:Wait()
+    humanoid = character:WaitForChild("Humanoid")
+    rootPart = character:WaitForChild("HumanoidRootPart")
+    humanoid.WalkSpeed = walkSpeed
 end
 
--- Slider oluşturucu
-local function createSlider(name, yPos, minVal, maxVal, defaultVal, callback)
-	local label = Instance.new("TextLabel")
-	label.Size = UDim2.new(1, -20, 0, 20)
-	label.Position = UDim2.new(0, 10, 0, yPos)
-	label.BackgroundTransparency = 1
-	label.Text = name .. ": " .. defaultVal
-	label.TextColor3 = Color3.new(1, 1, 1)
-	label.Font = Enum.Font.Gotham
-	label.TextSize = 14
-	label.Parent = mainFrame
-
-	local sliderBack = Instance.new("Frame")
-	sliderBack.Size = UDim2.new(1, -20, 0, 10)
-	sliderBack.Position = UDim2.new(0, 10, 0, yPos + 20)
-	sliderBack.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
-	sliderBack.BorderSizePixel = 0
-	sliderBack.Parent = mainFrame
-	local backCorner = Instance.new("UICorner")
-	backCorner.CornerRadius = UDim.new(0, 4)
-	backCorner.Parent = sliderBack
-
-	local sliderFill = Instance.new("Frame")
-	sliderFill.Size = UDim2.new((defaultVal - minVal) / (maxVal - minVal), 0, 1, 0)
-	sliderFill.BackgroundColor3 = Color3.fromRGB(100, 200, 100)
-	sliderFill.BorderSizePixel = 0
-	sliderFill.Parent = sliderBack
-	local fillCorner = Instance.new("UICorner")
-	fillCorner.CornerRadius = UDim.new(0, 4)
-	fillCorner.Parent = sliderFill
-
-	local dragging = false
-
-	local function updateSlider(inputX)
-		local rel = math.clamp((inputX - sliderBack.AbsolutePosition.X) / sliderBack.AbsoluteSize.X, 0, 1)
-		sliderFill.Size = UDim2.new(rel, 0, 1, 0)
-		local value = math.floor(minVal + rel * (maxVal - minVal))
-		label.Text = name .. ": " .. value
-		callback(value)
-	end
-
-	sliderBack.InputBegan:Connect(function(input)
-		if input.UserInputType == Enum.UserInputType.MouseButton1 then
-			dragging = true
-			updateSlider(UserInputService:GetMouseLocation().X)
-		end
-	end)
-	UserInputService.InputEnded:Connect(function(input)
-		if input.UserInputType == Enum.UserInputType.MouseButton1 then
-			dragging = false
-		end
-	end)
-	UserInputService.InputChanged:Connect(function(input)
-		if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
-			updateSlider(UserInputService:GetMouseLocation().X)
-		end
-	end)
-end
-
---=== Feature Functions ===--
-local function toggleFly()
-	flyEnabled = not flyEnabled
-	if flyEnabled then
-		local rootPart = character:WaitForChild("HumanoidRootPart")
-		bodyGyro = Instance.new("BodyGyro")
-		bodyGyro.P = 9e4
-		bodyGyro.Parent = rootPart
-
-		bodyVelocity = Instance.new("BodyVelocity")
-		bodyVelocity.MaxForce = Vector3.new(9e4, 9e4, 9e4)
-		bodyVelocity.Parent = rootPart
-
-		RunService.RenderStepped:Connect(function()
-			if flyEnabled then
-				local camCF = workspace.CurrentCamera.CFrame
-				bodyGyro.CFrame = camCF
-				bodyVelocity.Velocity = camCF.LookVector * flySpeed
-			end
-		end)
-	else
-		if bodyGyro then bodyGyro:Destroy() end
-		if bodyVelocity then bodyVelocity:Destroy() end
-	end
-end
-
-local function setSpeed(val)
-	speedValue = val
-	humanoid.WalkSpeed = speedValue
-end
-
-local function setFlySpeed(val)
-	flySpeed = val
-end
-
-local function toggleInfiniteJump()
-	infiniteJump = not infiniteJump
-end
-
-UserInputService.JumpRequest:Connect(function()
-	if infiniteJump then
-		humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
-	end
+player.CharacterAdded:Connect(function()
+    refreshCharacterRefs()
 end)
 
-local function toggleESP()
-	espEnabled = not espEnabled
-	if espEnabled then
-		RunService.RenderStepped:Connect(function()
-			for _, plr in ipairs(Players:GetPlayers()) do
-				if plr ~= player and plr.Character and plr.Character:FindFirstChild("Head") then
-					if not plr.Character.Head:FindFirstChild("ESPTag") then
-						local bb = Instance.new("BillboardGui")
-						bb.Name = "ESPTag"
-						bb.Size = UDim2.new(0, 100, 0, 50)
-						bb.AlwaysOnTop = true
-						local lbl = Instance.new("TextLabel")
-						lbl.Size = UDim2.new(1,0,1,0)
-						lbl.BackgroundTransparency = 1
-						lbl.Text = plr.Name
-						lbl.TextColor3 = Color3.new(1,0,0)
-						lbl.TextScaled = true
-						lbl.Parent = bb
-						bb.Parent = plr.Character.Head
-					end
-				end
-			end
-			for _, obj in ipairs(workspace:GetDescendants()) do
-				if obj:IsA("Part") and (obj.Name == "Key" or obj.Name == "Door") then
-					if not obj:FindFirstChild("ESPTag") then
-						local bb = Instance.new("BillboardGui")
-						bb.Name = "ESPTag"
-						bb.Size = UDim2.new(0, 100, 0, 50)
-						bb.AlwaysOnTop = true
-						local lbl = Instance.new("TextLabel")
-						lbl.Size = UDim2.new(1,0,1,0)
-						lbl.BackgroundTransparency = 1
-						lbl.Text = obj.Name
-						lbl.TextColor3 = Color3.new(1,1,0)
-						lbl.TextScaled = true
-						lbl.Parent = bb
-						bb.Parent = obj
-					end
-				end
-			end
-		end)
-	else
-		for _, tag in ipairs(workspace:GetDescendants()) do
-			if tag:IsA("BillboardGui") and tag.Name == "ESPTag" then
-				tag:Destroy()
-			end
-		end
-	end
+-- --- GUI ---
+local playerGui = player:WaitForChild("PlayerGui")
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "SimpleMenuGui"
+screenGui.Parent = playerGui
+screenGui.ResetOnSpawn = false
+screenGui.IgnoreGuiInset = true
+
+-- Main frame
+local main = Instance.new("Frame")
+main.Name = "Main"
+main.Size = UDim2.new(0, 300, 0, 260)
+main.Position = UDim2.new(0, 50, 0.5, -130)
+main.BackgroundColor3 = Color3.fromRGB(28,28,30)
+main.BorderSizePixel = 0
+main.Parent = screenGui
+
+local mainCorner = Instance.new("UICorner", main)
+mainCorner.CornerRadius = UDim.new(0,8)
+
+-- Title bar (drag from here)
+local title = Instance.new("Frame")
+title.Name = "TitleBar"
+title.Size = UDim2.new(1, 0, 0, 36)
+title.Position = UDim2.new(0,0,0,0)
+title.BackgroundColor3 = Color3.fromRGB(40,40,42)
+title.BorderSizePixel = 0
+title.Parent = main
+local titleCorner = Instance.new("UICorner", title)
+titleCorner.CornerRadius = UDim.new(0,8)
+
+local titleLabel = Instance.new("TextLabel")
+titleLabel.Size = UDim2.new(1, -10, 1, 0)
+titleLabel.Position = UDim2.new(0, 10, 0, 0)
+titleLabel.BackgroundTransparency = 1
+titleLabel.Text = "Simple Menu"
+titleLabel.TextColor3 = Color3.new(1,1,1)
+titleLabel.Font = Enum.Font.GothamBold
+titleLabel.TextSize = 18
+titleLabel.TextXAlignment = Enum.TextXAlignment.Left
+titleLabel.Parent = title
+
+-- Close button
+local closeBtn = Instance.new("TextButton")
+closeBtn.Size = UDim2.new(0, 28, 0, 24)
+closeBtn.Position = UDim2.new(1, -36, 0, 6)
+closeBtn.Text = "X"
+closeBtn.Font = Enum.Font.SourceSansBold
+closeBtn.TextSize = 18
+closeBtn.TextColor3 = Color3.fromRGB(220,220,220)
+closeBtn.BackgroundColor3 = Color3.fromRGB(160,40,40)
+closeBtn.Parent = title
+local closeCorner = Instance.new("UICorner", closeBtn)
+closeCorner.CornerRadius = UDim.new(0,6)
+
+closeBtn.MouseButton1Click:Connect(function()
+    screenGui.Enabled = not screenGui.Enabled
+end)
+
+-- Simple element helper
+local function createLabel(text, y)
+    local lbl = Instance.new("TextLabel")
+    lbl.Size = UDim2.new(1, -20, 0, 20)
+    lbl.Position = UDim2.new(0, 10, 0, y)
+    lbl.BackgroundTransparency = 1
+    lbl.Text = text
+    lbl.TextColor3 = Color3.new(1,1,1)
+    lbl.Font = Enum.Font.Gotham
+    lbl.TextSize = 14
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
+    lbl.Parent = main
+    return lbl
 end
 
---=== UI Elements ===--
-createButton("Toggle Fly", 50, toggleFly)
-createSlider("Fly Speed", 100, 10, 100, flySpeed, setFlySpeed)
-createSlider("Walk Speed", 160, 10, 100, speedValue, setSpeed)
-createButton("Toggle Infinite Jump", 220, toggleInfiniteJump)
-createButton("Toggle ESP", 270, toggleESP)
-﻿
+local function createButton(text, y, callback)
+    local b = Instance.new("TextButton")
+    b.Size = UDim2.new(1, -20, 0, 30)
+    b.Position = UDim2.new(0, 10, 0, y)
+    b.Text = text
+    b.Font = Enum.Font.Gotham
+    b.TextSize = 14
+    b.TextColor3 = Color3.new(1,1,1)
+    b.BackgroundColor3 = Color3.fromRGB(60,60,60)
+    b.Parent = main
+    local c = Instance.new("UICorner", b)
+    c.CornerRadius = UDim.new(0,6)
+    b.MouseButton1Click:Connect(callback)
+    return b
+end
+
+local function createSlider(text, y, minVal, maxVal, defaultVal, callback)
+    createLabel(text .. " : " .. defaultVal, y)
+    local back = Instance.new("Frame")
+    back.Size = UDim2.new(1, -20, 0, 10)
+    back.Position = UDim2.new(0, 10, 0, y + 22)
+    back.BackgroundColor3 = Color3.fromRGB(50,50,50)
+    back.Parent = main
+    local backCorner = Instance.new("UICorner", back)
+    backCorner.CornerRadius = UDim.new(0,4)
+
+    local fill = Instance.new("Frame")
+    local rel = (defaultVal - minVal) / (maxVal - minVal)
+    fill.Size = UDim2.new(rel, 0, 1, 0)
+    fill.BackgroundColor3 = Color3.fromRGB(100,200,100)
+    fill.Parent = back
+    local fillCorner = Instance.new("UICorner", fill)
+    fillCorner.CornerRadius = UDim.new(0,4)
+
+    local dragging = false
+    local label = main:FindFirstChildWhichIsA("TextLabel", true) -- not used; we'll update the top label instead
+
+    local function setByX(x)
+        local posX = math.clamp((x - back.AbsolutePosition.X) / back.AbsoluteSize.X, 0, 1)
+        fill.Size = UDim2.new(posX, 0, 1, 0)
+        local value = math.floor(minVal + posX * (maxVal - minVal))
+        -- update the label above (find by position)
+        for _, v in ipairs(main:GetChildren()) do
+            if v:IsA("TextLabel") and v.Position.Y.Offset == y then
+                v.Text = text .. " : " .. value
+            end
+        end
+        callback(value)
+    end
+
+    back.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = true
+            setByX(UserInputService:GetMouseLocation().X)
+        end
+    end)
+    UserInputService.InputChanged:Connect(function(input)
+        if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+            setByX(UserInputService:GetMouseLocation().X)
+        end
+    end)
+    UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = false
+        end
+    end)
+
+    return {back = back, fill = fill}
+end
+
+-- Build UI
+local y = 46
+createLabel("Movement Controls", y); y = y + 24
+-- Fly toggle
+createButton("Toggle Fly (F opens/close)", y, function()
+    flyEnabled = not flyEnabled
+    if flyEnabled then
+        -- create physics objects
+        if rootPart and rootPart.Parent then
+            bodyGyro = Instance.new("BodyGyro")
+            bodyGyro.P = 9e4
+            bodyGyro.MaxTorque = Vector3.new(9e5,9e5,9e5)
+            bodyGyro.Parent = rootPart
+            bodyVelocity = Instance.new("BodyVelocity")
+            bodyVelocity.MaxForce = Vector3.new(9e5,9e5,9e5)
+            bodyVelocity.Parent = rootPart
+        end
+    else
+        if bodyGyro then bodyGyro:Destroy(); bodyGyro = nil end
+        if bodyVelocity then bodyVelocity:Destroy(); bodyVelocity = nil end
+    end
+end)
+y = y + 36
+
+-- Fly speed slider (10-100)
+createSlider("Fly Speed", y, 10, 100, flySpeed, function(v)
+    flySpeed = v
+end)
+y = y + 46
+
+-- Walk speed
+createSlider("Walk Speed", y, 10, 100, walkSpeed, function(v)
+    walkSpeed = v
+    if humanoid then humanoid.WalkSpeed = walkSpeed end
+end)
+y = y + 46
+
+-- Infinite jump
+createButton("Toggle Infinite Jump", y, function()
+    infiniteJump = not infiniteJump
+end)
+y = y + 36
+
+-- ESP toggle
+createButton("Toggle ESP", y, function()
+    espEnabled = not espEnabled
+    if not espEnabled then
+        -- remove existing ESP tags
+        for _, gui in ipairs(workspace:GetDescendants()) do
+            if gui:IsA("BillboardGui") and gui.Name == "SimpleESP" then
+                gui:Destroy()
+            end
+        end
+    end
+end)
+y = y + 36
+
+-- --- Drag code for title ---
+local draggingGui = false
+local dragStart = Vector2.new()
+local startPos = Vector2.new()
+title.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        draggingGui = true
+        dragStart = UserInputService:GetMouseLocation()
+        startPos = Vector2.new(main.Position.X.Offset, main.Position.Y.Offset)
+        input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then
+                draggingGui = false
+            end
+        end)
+    end
+end)
+UserInputService.InputChanged:Connect(function(input)
+    if draggingGui and input.UserInputType == Enum.UserInputType.MouseMovement then
+        local delta = UserInputService:GetMouseLocation() - dragStart
+        main.Position = UDim2.new(0, startPos.X + delta.X, 0, startPos.Y + delta.Y)
+    end
+end)
+
+-- --- Key bindings ---
+UserInputService.InputBegan:Connect(function(input, gp)
+    if gp then return end
+    if input.KeyCode == Enum.KeyCode.F then
+        -- toggle fly via key as well
+        flyEnabled = not flyEnabled
+        if flyEnabled then
+            if rootPart and rootPart.Parent then
+                bodyGyro = Instance.new("BodyGyro")
+                bodyGyro.P = 9e4
+                bodyGyro.MaxTorque = Vector3.new(9e5,9e5,9e5)
+                bodyGyro.Parent = rootPart
+                bodyVelocity = Instance.new("BodyVelocity")
+                bodyVelocity.MaxForce = Vector3.new(9e5,9e5,9e5)
+                bodyVelocity.Parent = rootPart
+            end
+        else
+            if bodyGyro then bodyGyro:Destroy(); bodyGyro = nil end
+            if bodyVelocity then bodyVelocity:Destroy(); bodyVelocity = nil end
+        end
+    end
+end)
+
+-- Infinite jump handler
+UserInputService.JumpRequest:Connect(function()
+    if infiniteJump and humanoid then
+        humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+    end
+end)
+
+-- --- ESP / Fly update loop ---
+local espUpdateAccumulator = 0
+local espUpdateInterval = 0.25 -- saniyede ~4 kez güncelle
+
+RunService.Heartbeat:Connect(function(dt)
+    -- ensure refs
+    if not character or not character.Parent then
+        refreshCharacterRefs()
+    end
+
+    -- Fly motion
+    if flyEnabled and bodyVelocity and bodyGyro and workspace.CurrentCamera then
+        local camCF = workspace.CurrentCamera.CFrame
+        bodyGyro.CFrame = camCF
+        bodyVelocity.Velocity = camCF.LookVector * flySpeed
+        -- keep player bumped into humanoid state to avoid ragdoll
+        if humanoid:GetState() == Enum.HumanoidStateType.Freefall then
+            humanoid:ChangeState(Enum.HumanoidStateType.Physics)
+        end
+    end
+
+    -- ESP update periodically
+    if espEnabled then
+        espUpdateAccumulator = espUpdateAccumulator + dt
+        if espUpdateAccumulator >= espUpdateInterval then
+            espUpdateAccumulator = 0
+            -- players
+            for _, plr in ipairs(Players:GetPlayers()) do
+                if plr ~= player and plr.Character and plr.Character:FindFirstChild("Head") then
+                    local head = plr.Character.Head
+                    if not head:FindFirstChild("SimpleESP") then
+                        local bb = Instance.new("BillboardGui")
+                        bb.Name = "SimpleESP"
+                        bb.Size = UDim2.new(0,120,0,40)
+                        bb.StudsOffset = Vector3.new(0, 2.2, 0)
+                        bb.AlwaysOnTop = true
+                        local txt = Instance.new("TextLabel", bb)
+                        txt.Size = UDim2.new(1,0,1,0)
+                        txt.BackgroundTransparency = 1
+                        txt.Text = plr.Name
+                        txt.TextScaled = true
+                        txt.TextColor3 = Color3.fromRGB(255,80,80)
+                        txt.Font = Enum.Font.GothamBold
+                        bb.Parent = head
+                    end
+                end
+            end
+            -- objects (Key / Door named Parts)
+            for _, obj in ipairs(workspace:GetDescendants()) do
+                if obj:IsA("BasePart") and (obj.Name == "Key" or obj.Name == "Door") then
+                    if not obj:FindFirstChild("SimpleESP") then
+                        local bb = Instance.new("BillboardGui")
+                        bb.Name = "SimpleESP"
+                        bb.Size = UDim2.new(0,110,0,30)
+                        bb.StudsOffset = Vector3.new(0, 1.5, 0)
+                        bb.AlwaysOnTop = true
+                        local txt = Instance.new("TextLabel", bb)
+                        txt.Size = UDim2.new(1,0,1,0)
+                        txt.BackgroundTransparency = 1
+                        txt.Text = obj.Name
+                        txt.TextScaled = true
+                        txt.TextColor3 = Color3.fromRGB(255,220,80)
+                        txt.Font = Enum.Font.Gotham
+                        bb.Parent = obj
+                    end
+                end
+            end
+        end
+    end
+end)
+
+-- cleanup ESP when disabled or on script stop
+player.AncestryChanged:Connect(function()
+    if not player:IsDescendantOf(game) then
+        for _, g in ipairs(workspace:GetDescendants()) do
+            if g:IsA("BillboardGui") and g.Name == "SimpleESP" then
+                g:Destroy()
+            end
+        end
+    end
+end)
+
+-- Ensure initial humanoid speed
+if humanoid then humanoid.WalkSpeed = walkSpeed end
+
+print("SimpleDraggableMenu loaded")
